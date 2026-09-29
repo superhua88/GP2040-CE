@@ -276,6 +276,8 @@ src/addons/he_trigger.cpp
 src/addons/buzzerspeaker.cpp
 src/addons/dualdirectional.cpp
 src/addons/keyboard_host.cpp
+            src/addons/nrf24tx.cpp
+            src/addons/nrf24rx.cpp
 src/addons/keyboard_host_listener.cpp
 src/addons/i2canalog1115.cpp
 src/addons/i2canalog1219.cpp
