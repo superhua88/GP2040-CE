@@ -34,6 +34,8 @@
 #include "addons/gamepad_usb_host.h"
 #include "addons/he_trigger.h"
 #include "addons/tg16_input.h"
+#include "addons/nrf24tx.h"
+#include "addons/nrf24rx.h"
 #include "addons/slider_profile.h"
 
 // Pico includes
@@ -120,6 +122,8 @@ void GP2040::setup() {
 	addons.LoadAddon(new RotaryEncoderInput());
 	addons.LoadAddon(new PCF8575Addon());
 	addons.LoadAddon(new TG16padInput());
+	addons.LoadAddon(new Nrf24TxAddon());
+	addons.LoadAddon(new Nrf24RxAddon());
 
 	// Input override addons
 	addons.LoadAddon(new ReverseInput());
