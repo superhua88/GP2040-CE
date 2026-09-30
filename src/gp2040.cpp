@@ -36,6 +36,7 @@
 #include "addons/tg16_input.h"
 #include "addons/nrf24tx.h"
 #include "addons/nrf24rx.h"
+#include "addons/batterymeter.h"
 #include "addons/slider_profile.h"
 
 // Pico includes
@@ -124,6 +125,7 @@ void GP2040::setup() {
 	addons.LoadAddon(new TG16padInput());
 	addons.LoadAddon(new Nrf24TxAddon());
 	addons.LoadAddon(new Nrf24RxAddon());
+	addons.LoadAddon(new BatteryMeterAddon());
 
 	// Input override addons
 	addons.LoadAddon(new ReverseInput());
