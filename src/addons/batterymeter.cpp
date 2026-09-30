@@ -1,16 +1,32 @@
 // ===================================================================
 // GP2040-CE 插件 · 电量灯条实现（NeoPico 驱动版）
-// 电量来源：官方 Battery 插件写入的 auxState.sensor.battery (0-100)
+// 电量来源：GamepadAuxPower（auxState.power.level 0-100 / .charging）
+// 由 Pico 电池分压 ADC 自行采样（本插件自带采样，无需官方 Battery 插件）
 // ===================================================================
 #include "addons/batterymeter.h"
 #include "storagemanager.h"
 #include "gamepad.h"
 #include "NeoPico.h"
+#include "hardware/adc.h"
 
 static NeoPico *meterPico = nullptr;
 static uint32_t frame[METER_LED_COUNT];
 
-// GRB 打包（WS2812 标准）：(G<<16)|(R<<8)|B
+#ifndef BATTERY_ADC_PIN
+#define BATTERY_ADC_PIN 26       // ADC0：接电池分压中点
+#endif
+#ifndef BATTERY_ADC_FULL_MV
+#define BATTERY_ADC_FULL_MV 4200 // 满电电压
+#endif
+#ifndef BATTERY_ADC_EMPTY_MV
+#define BATTERY_ADC_EMPTY_MV 3300 // 建议截止电压（留保护余量）
+#endif
+// 分压系数：100k/100k 分压时 ADC 读数是电池电压一半，x2 还原；按实际电阻改
+#ifndef BATTERY_DIVIDER
+#define BATTERY_DIVIDER 2.0f
+#endif
+
+// GRB 打包（WS2812 标准）
 static inline uint32_t grb(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
 }
@@ -29,21 +45,33 @@ void BatteryMeterAddon::setup() {
     _lastAnim = 0;
     meterPico = new NeoPico();
     meterPico->Setup(METER_LED_PIN, METER_LED_COUNT, LED_FORMAT_GRB, pio0, 0);
+
+    // ADC 采样电池分压
+    adc_init();
+    adc_gpio_init(BATTERY_ADC_PIN);
+    adc_select_input(BATTERY_ADC_PIN - 26);
+}
+
+uint8_t BatteryMeterAddon::readBatteryPercent() {
+    // 12bit ADC，Vref=3.3V；分压还原
+    uint16_t raw = adc_read();
+    uint32_t mv = (uint32_t)(raw * 3300UL / 4095) * BATTERY_DIVIDER;
+    if (mv >= BATTERY_ADC_FULL_MV) return 100;
+    if (mv <= BATTERY_ADC_EMPTY_MV) return 0;
+    return (uint8_t)((mv - BATTERY_ADC_EMPTY_MV) * 100UL / (BATTERY_ADC_FULL_MV - BATTERY_ADC_EMPTY_MV));
 }
 
 void BatteryMeterAddon::process() {
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
-    uint8_t pct = gamepad->auxState.sensor.battery;
+    uint8_t pct = readBatteryPercent();
+    // 充电检测：插着 USB（VBUS 有电）即为充电/有线状态
+    bool charging = (gamepad->auxState.power.pluggedIn != 0);
 
     uint32_t now = getMillis();
-    bool charging = (gamepad->auxState.sensor.charging != 0);
-
-    // 刷新节流：静态 500ms；充电动画 50ms
     uint32_t interval = charging ? 50 : 500;
     if (now - _lastAnim < interval) return;
     _lastAnim = now;
 
-    // 绿灯数量梯度
     uint8_t greenCount;
     if      (pct >= 90) greenCount = 6;
     else if (pct >= 75) greenCount = 5;
@@ -54,7 +82,6 @@ void BatteryMeterAddon::process() {
     else                greenCount = 0;
 
     if (charging) {
-        // 充电：已充的常绿，正在充的呼吸，其余灭
         for (uint8_t i = 0; i < METER_LED_COUNT; i++) {
             if (i < greenCount)            _frame[i] = C_GREEN;
             else if (i == greenCount)      _frame[i] = grb(0, _breath, 0);
