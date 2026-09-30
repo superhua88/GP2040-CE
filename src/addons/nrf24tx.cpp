@@ -1,8 +1,9 @@
 // ===================================================================
 // GP2040-CE 插件 · nRF24 发射端实现
-// v2 软开关电源管理：
-//   setup()   第一时间拉高 POWER_HOLD（取代开机按钮的保持信号）
-//   process() 检测长按关机 / 断链超时 / 闲置超时 -> 释放 POWER_HOLD 断电
+// v2.1 适配单键电子开关（短按 toggle 型）：
+//   用户短按模块键 -> 硬件通电/断电
+//   固件自动关机（断链/闲置超时）-> pressSim() 经光耦模拟短按 -> 模块断电
+//   插 USB 线（有线模式）时永不自动关机
 // ===================================================================
 #include "addons/nrf24tx.h"
 #include "storagemanager.h"
@@ -14,16 +15,10 @@ bool Nrf24TxAddon::available() {
 }
 
 void Nrf24TxAddon::setup() {
-    // 电源保持：上电后立刻接管按钮的保持信号（按钮模块电路：EN 低有效断电）
-    gpio_init(POWER_HOLD_PIN);
-    gpio_set_dir(POWER_HOLD_PIN, GPIO_OUT);
-    gpio_put(POWER_HOLD_PIN, 1);
-
-    // 关机按钮：输入上拉，按下=低
-    gpio_init(POWER_BTN_PIN);
-    gpio_set_dir(POWER_BTN_PIN, GPIO_IN);
-    gpio_pull_up(POWER_BTN_PIN);
-    _btnPressStart = 0;
+    // 光耦控制脚：默认低（不触发），高电平 150ms = 模拟一次短按
+    gpio_init(PRESS_SIM_PIN);
+    gpio_set_dir(PRESS_SIM_PIN, GPIO_OUT);
+    gpio_put(PRESS_SIM_PIN, 0);
 
     // 无线初始化
     _radio.init(spi0, NRF24_PIN_SCK, NRF24_PIN_MOSI, NRF24_PIN_MISO,
@@ -45,25 +40,13 @@ void Nrf24TxAddon::process() {
     GamepadState &s = gamepad->state;
     uint32_t now = getMillis();
 
-    // ---- 1. 长按关机检测（按住 2 秒）----
-    bool btnDown = (gpio_get(POWER_BTN_PIN) == 0);
-    if (btnDown) {
-        if (_btnPressStart == 0) {
-            _btnPressStart = now;
-        } else if (now - _btnPressStart >= POWER_BTN_HOLD_OFF_MS) {
-            powerOff();                     // 释放 POWER_HOLD -> 整机断电
-        }
-    } else {
-        _btnPressStart = 0;
-    }
-
-    // ---- 2. 有线模式豁免：USB 已枚举时永不自动关机 ----
+    // ---- 有线模式豁免：USB 枚举成功时永不自动关机（也跳过无线发包）----
     if (tud_ready()) {
-        _lastActivity = now;                // 有线使用也算"活动"
-        return;                             // 跳过自动断电判断，但无线包也不必发
+        _lastActivity = now;
+        return;
     }
 
-    // ---- 3. 组包发送 ----
+    // ---- 组包发送（50ms 心跳 / 输入变化立即发）----
     uint32_t bits = 0;
     auto set = [&](bool v, uint8_t bit) { if (v) bits |= (1UL << bit); };
 
@@ -87,7 +70,7 @@ void Nrf24TxAddon::process() {
 
     bool changed = (bits != _lastButtons);
     if (!changed && (now - _lastHeartbeat) < 50) {
-        // 无新包也继续超时判断（下方）
+        // 掉到超时判断
     } else {
         radio_pack(&_pkt, bits, 100, _seq++);
         bool acked = _radio.write(&_pkt, sizeof(_pkt));
@@ -99,34 +82,38 @@ void Nrf24TxAddon::process() {
         }
     }
 
-    // ---- 4. 活动时间戳 ----
-    if (bits != _lastActivityBits || changed) {
+    // ---- 活动时间戳 ----
+    if (bits != _lastActivityBits) {
         _lastActivityBits = bits;
         _lastActivity = now;
     }
 
-    // ---- 5. 自动断电判断 ----
-    // 5a. 从未连上过（开机后 60s 内没有 dongle 应答）且已超 5 分钟 -> 关机
-    if (!_linkUp && now > POWER_LINK_LOST_OFF_MS && (now - _lastLink) > POWER_LINK_LOST_OFF_MS) {
-        // 从未连上：_lastLink=0，now>5min 即可关（给 dongle 足够上线时间）
-        if (_lastLink == 0 && now > POWER_LINK_LOST_OFF_MS) {
-            powerOff();
-        }
+    // ---- 自动关机判断 ----
+    // a. 开机后从未连上 dongle：给 60s 上线窗口 + 5min 宽限
+    if (!_linkUp && _lastLink == 0 &&
+        now > (60000 + POWER_LINK_LOST_OFF_MS)) {
+        powerOff();
     }
-    // 5b. 曾连上但断链超时
+    // b. 曾连上但断链超时
     if (_linkUp && (now - _lastLink) > POWER_LINK_LOST_OFF_MS) {
         powerOff();
     }
-    // 5c. 无操作超时（不论链路状态）
+    // c. 无操作超时（按键位图长时间无变化）
     if (now - _lastActivity > POWER_IDLE_OFF_MS) {
         powerOff();
     }
 }
 
+// 经 PC817 光耦模拟一次"短按"：模块收到后 toggle 断电
+void Nrf24TxAddon::pressSim() {
+    gpio_put(PRESS_SIM_PIN, 1);
+    sleep_ms(PRESS_PULSE_MS);
+    gpio_put(PRESS_SIM_PIN, 0);
+}
+
 void Nrf24TxAddon::powerOff() {
-    // 释放保持信号：一键开关机模块的 MOS 断开，整机断电（功耗归零）
-    gpio_put(POWER_HOLD_PIN, 0);
-    // 断电是异步生效的（几十 ms 内），这里死循环等待断电，避免固件继续跑
+    pressSim();
+    // 模块断电有几十 ms 延迟，死循环等待物理断电
     while (true) {
         tight_loop_contents();
     }
