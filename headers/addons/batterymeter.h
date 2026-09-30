@@ -4,7 +4,7 @@
 // ===================================================================
 // GP2040-CE 插件 · 电量灯条（WS2812B，NeoPico 驱动）
 // 6 颗灯显示电量：满电全绿，逐颗变红；充电中呼吸；<12% 全红闪烁
-// 数据线接 GP15，5V 接 VBUS，与 nRF24 (GP2-6)/电源管理 (GP7) 无冲突
+// 电量由本插件 ADC 自采样（GP26 分压），无需官方 Battery 插件
 // ===================================================================
 #include "gpaddon.h"
 #include "enums.pb.h"
@@ -33,6 +33,7 @@ public:
     virtual std::string name() { return BatteryMeterAddonName; }
 
 private:
+    uint8_t readBatteryPercent();
     uint32_t _frame[METER_LED_COUNT];
     uint8_t _breath;
     bool _breathDir;
