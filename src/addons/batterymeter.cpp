@@ -1,45 +1,49 @@
 // ===================================================================
-// GP2040-CE 插件 · 电量灯条实现
-// 数据来源：GP2040-CE Battery 插件的 auxState.sensor.battery 为 0-100
-// （固件构建时需同时启用 Battery 插件，其 ADC 引脚接电池分压）
+// GP2040-CE 插件 · 电量灯条实现（NeoPico 驱动版）
+// 电量来源：官方 Battery 插件写入的 auxState.sensor.battery (0-100)
 // ===================================================================
 #include "addons/batterymeter.h"
 #include "storagemanager.h"
-#include "picoled.h"        // PicoLed 库（GP2040-CE 自带）
-#include "hardware/adc.h"
+#include "gamepad.h"
+#include "NeoPico.h"
+
+static NeoPico *meterPico = nullptr;
+static uint32_t frame[METER_LED_COUNT];
+
+// GRB 打包（WS2812 标准）：(G<<16)|(R<<8)|B
+static inline uint32_t grb(uint8_t r, uint8_t g, uint8_t b) {
+    return ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
+}
+
+#define C_GREEN  grb(0, 255, 0)
+#define C_RED    grb(255, 0, 0)
+#define C_OFF    grb(0, 0, 0)
 
 bool BatteryMeterAddon::available() {
     return BATTERY_METER_ENABLED;
 }
 
 void BatteryMeterAddon::setup() {
-    _brightness = 0;
+    _breath = 0;
+    _breathDir = true;
     _lastAnim = 0;
-    _animDir = true;
-}
-
-void BatteryMeterAddon::setLed(uint8_t idx, uint8_t r, uint8_t g, uint8_t b) {
-    if (idx >= METER_LED_COUNT) return;
-    PicoLed::setPixelColor(idx, r, g, b);
-}
-
-void BatteryMeterAddon::showLeds() {
-    PicoLed::show();
+    meterPico = new NeoPico();
+    meterPico->Setup(METER_LED_PIN, METER_LED_COUNT, LED_FORMAT_GRB, pio0, 0);
 }
 
 void BatteryMeterAddon::process() {
-    // 读电量（Battery 插件维护，0-100）
     Gamepad *gamepad = Storage::getInstance().GetGamepad();
     uint8_t pct = gamepad->auxState.sensor.battery;
-    bool charging = gamepad->auxState.sensor.charging;   // Battery 插件可报充电状态
 
     uint32_t now = getMillis();
-    // 动画节流：非充电 500ms 刷新一次；充电呼吸动画 50ms 一次
-    if (!charging && (now - _lastAnim) < 500) return;
-    if (charging && (now - _lastAnim) >= 50) { _lastAnim = now; }
-    else if (!charging) { _lastAnim = now; }
+    bool charging = (gamepad->auxState.sensor.charging != 0);
 
-    // 计算亮绿数量（每 17% 一颗：100%->6, 83%->5, ... 17%->1, <17%->0）
+    // 刷新节流：静态 500ms；充电动画 50ms
+    uint32_t interval = charging ? 50 : 500;
+    if (now - _lastAnim < interval) return;
+    _lastAnim = now;
+
+    // 绿灯数量梯度
     uint8_t greenCount;
     if      (pct >= 90) greenCount = 6;
     else if (pct >= 75) greenCount = 5;
@@ -47,47 +51,31 @@ void BatteryMeterAddon::process() {
     else if (pct >= 42) greenCount = 3;
     else if (pct >= 25) greenCount = 2;
     else if (pct >= 12) greenCount = 1;
-    else greenCount = 0;
+    else                greenCount = 0;
 
     if (charging) {
-        // ============ 充电动画：绿灯从左到右流动 ============
-        // 亮起的位置数 = 已充比例对应的灯数，当前"正在充"的那颗做呼吸
-        // 例：45% -> 3 绿常亮 + 第 4 颗呼吸
+        // 充电：已充的常绿，正在充的呼吸，其余灭
         for (uint8_t i = 0; i < METER_LED_COUNT; i++) {
-            if (i < greenCount) {
-                setLed(i, C_GREEN);                       // 已充好的常绿
-            } else if (i == greenCount && greenCount < METER_LED_COUNT) {
-                // 正在充的灯：呼吸（亮度渐变）
-                uint8_t br = _brightness;
-                setLed(i, 0, br, 0);
+            if (i < greenCount)            _frame[i] = C_GREEN;
+            else if (i == greenCount)      _frame[i] = grb(0, _breath, 0);
+            else                           _frame[i] = C_OFF;
+        }
+        if (_breathDir) { _breath += 5; if (_breath >= 250) _breathDir = false; }
+        else            { _breath -= 5; if (_breath <= 5)   _breathDir = true;  }
+    } else {
+        bool blink = false;
+        if (pct < 12) blink = ((now / 300) % 2) == 0;
+        for (uint8_t i = 0; i < METER_LED_COUNT; i++) {
+            if (pct < 12) {
+                _frame[i] = blink ? C_RED : C_OFF;
+            } else if (i < greenCount) {
+                _frame[i] = C_GREEN;
             } else {
-                setLed(i, C_OFF);
+                _frame[i] = C_RED;
             }
         }
-        // 呼吸步进
-        if (_animDir) { _brightness += 5; if (_brightness >= 250) _animDir = false; }
-        else          { _brightness -= 5; if (_brightness <= 5)   _animDir = true;  }
-        showLeds();
-        return;
     }
 
-    // ============ 非充电：静态电量显示 ============
-    // 绿灯 = 已有电量；红色 = 已消耗部分；<12% 时全部红灯闪烁警告
-    bool blink = false;
-    if (pct < 12) {
-        blink = ((now / 300) % 2) == 0;    // 300ms 闪烁
-    }
-
-    for (uint8_t i = 0; i < METER_LED_COUNT; i++) {
-        if (pct < 12) {
-            // 低电量警告：全部红灯闪烁
-            if (blink) setLed(i, C_RED);
-            else       setLed(i, C_OFF);
-        } else if (i < greenCount) {
-            setLed(i, C_GREEN);                // 剩余电量
-        } else {
-            setLed(i, C_RED);                  // 已消耗部分
-        }
-    }
-    showLeds();
+    meterPico->SetFrame(_frame);
+    meterPico->Show();
 }
