@@ -1,6 +1,7 @@
 // ===================================================================
-// GP2040-CE 插件 · nRF24 发射端实现（Hitbox 壳内的 Pico）
-// process(): 读当前 GamepadState（主流程已完成 SOCD）-> 打包 nRF24 发送
+// GP2040-CE 插件 · nRF24 发射端实现
+// process(): 读 GamepadState（主流程已 SOCD）-> 打包 nRF24 发送
+// GamepadState 无 hasXX 布尔，用 GAMEPAD_MASK 位判断
 // ===================================================================
 #include "addons/nrf24tx.h"
 #include "storagemanager.h"
@@ -16,35 +17,33 @@ void Nrf24TxAddon::setup() {
     memset(&_pkt, 0, sizeof(_pkt));
     _seq = 0;
     _lastHeartbeat = 0;
-    _lastButtons = 0xFFFFFFFF;  // 强制首次发送
+    _lastButtons = 0xFFFFFFFF;
 }
 
-void Nrf24TxAddon::preprocess() {
-    // 发送在 process()（输入状态已含 SOCD 结果），这里无需动作
-}
+void Nrf24TxAddon::preprocess() {}
 
 void Nrf24TxAddon::process() {
-    Gamepad &gamepad = Storage::getInstance().GetGamepad();
-    GamepadState &s = gamepad.state;
+    Gamepad *gamepad = Storage::getInstance().GetGamepad();
+    GamepadState &s = gamepad->state;
 
     uint32_t bits = 0;
     auto set = [&](bool v, uint8_t bit) { if (v) bits |= (1UL << bit); };
 
-    set(s.hasLB,    RB_LB);
-    set(s.hasRB,    RB_RB);
-    set(s.hasHome,  RB_HOME);
-    set(gamepad.pressedB1(), RB_A);
-    set(gamepad.pressedB2(), RB_B);
-    set(gamepad.pressedB3(), RB_X);
-    set(gamepad.pressedB4(), RB_Y);
-    set(gamepad.pressedUp(),    RB_UP);
-    set(gamepad.pressedDown(),  RB_DOWN);
-    set(gamepad.pressedLeft(),  RB_LEFT);
-    set(gamepad.pressedRight(), RB_RIGHT);
-    set(s.hasStart, RB_START);
-    set(s.hasBack,  RB_BACK);
-    set(s.hasLS,    RB_LS);
-    set(s.hasRS,    RB_RS);
+    set(s.buttons & GAMEPAD_MASK_L1, RB_LB);
+    set(s.buttons & GAMEPAD_MASK_R1, RB_RB);
+    set(s.buttons & GAMEPAD_MASK_A1, RB_HOME);
+    set(s.buttons & GAMEPAD_MASK_B1, RB_A);
+    set(s.buttons & GAMEPAD_MASK_B2, RB_B);
+    set(s.buttons & GAMEPAD_MASK_B3, RB_X);
+    set(s.buttons & GAMEPAD_MASK_B4, RB_Y);
+    set(s.dpad & GAMEPAD_MASK_UP,    RB_UP);
+    set(s.dpad & GAMEPAD_MASK_DOWN,  RB_DOWN);
+    set(s.dpad & GAMEPAD_MASK_LEFT,  RB_LEFT);
+    set(s.dpad & GAMEPAD_MASK_RIGHT, RB_RIGHT);
+    set(s.buttons & GAMEPAD_MASK_S2, RB_START);
+    set(s.buttons & GAMEPAD_MASK_S1, RB_BACK);
+    set(s.buttons & GAMEPAD_MASK_L3, RB_LS);
+    set(s.buttons & GAMEPAD_MASK_R3, RB_RS);
     set(s.lt > GAMEPAD_TRIGGER_MIN, RB_LT);
     set(s.rt > GAMEPAD_TRIGGER_MIN, RB_RT);
 
