@@ -50,6 +50,9 @@
 
 #include "nrf24_radio.h"
 
+// Battery meter LED gauge (6x WS2812B on GP15)
+#define BATTERY_METER_ENABLED 1
+
 #define Nrf24TxAddonName "NRF24 TX"
 
 class Nrf24TxAddon : public GPAddon {
