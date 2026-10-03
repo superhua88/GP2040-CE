@@ -11,6 +11,11 @@
 #include "gpaddon.h"
 #include "enums.pb.h"
 
+// 联调模式：1 = 即使插着 USB 也持续发包（开发期用）；正式版改 0
+#ifndef NRF24_ALWAYS_TX
+#define NRF24_ALWAYS_TX 1
+#endif
+
 #ifndef NRF24_TX_ENABLED
 #define NRF24_TX_ENABLED 0
 #endif
