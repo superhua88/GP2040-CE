@@ -40,8 +40,8 @@ void Nrf24TxAddon::process() {
     GamepadState &s = gamepad->state;
     uint32_t now = getMillis();
 
-    // ---- 有线模式豁免：USB 枚举成功时永不自动关机（也跳过无线发包）----
-    if (tud_ready()) {
+    // ---- 有线模式豁免：USB 枚举成功时跳过无线发包（ALWAYS_TX 调试模式除外）----
+    if (tud_ready() && !NRF24_ALWAYS_TX) {
         _lastActivity = now;
         return;
     }
