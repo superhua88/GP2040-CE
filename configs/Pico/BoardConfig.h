@@ -1,12 +1,18 @@
 /*
  * SPDX-License-Identifier: MIT
- * SPDX-FileCopyrightText: Copyright (c) 2024 OpenStickCommunity (gp2040-ce.info)
+ * HITBOX WIRELESS TX (Pico #1) - v5.1 clean pin map (single source of truth)
  *
- * HITBOX WIRELESS TX (Pico #1) - Custom pin map
- * nRF24L01+ on SPI0: SCK=GP22, MOSI=GP26, MISO=GP27, CSN=GP0, CE=GP1
- * Power-off optocoupler (PC817): GP15
- * Battery meter WS2812B: GP28 (BOARD_LEDS_PIN)
- * I2C display disabled (GP0/1 freed for nRF24)
+ * FINAL v5.1 pin plan:
+ *   nRF24L01+ SPI0: SCK=GP18, MOSI=GP19, MISO=GP20, CSN=GP21, CE=GP22
+ *   Keys: GP02-13 (12) + GP16(S1) GP17(S2) + GP26(L3) GP27(R3) GP28(A1) GP15(A2)
+ *   Power-off optocoupler (PC817): GP14 (PRESS_SIM_PIN)
+ *   Battery meter WS2812B x6: GP0 (METER_LED_PIN)
+ *   Battery %: firmware estimation (no ADC pin left on header)
+ *
+ * FIX 2026-10-07: removed the stale duplicate block that mapped
+ *   L3/R3/A1/A2 onto GP18/19/20/21 (same pins as the nRF24 SPI wires).
+ *   SPI idle-low levels were read as pressed buttons -> phantom LS+RS on
+ *   XInput, and the phantom bits were broadcast in every radio packet.
  */
 
 #ifndef PICO_BOARD_CONFIG_H_
@@ -33,74 +39,23 @@
 #define GPIO_PIN_13 GpioAction::BUTTON_PRESS_L1     // L1     | LB     | L       | L1       | 5      | P4     |
 #define GPIO_PIN_16 GpioAction::BUTTON_PRESS_S1     // S1     | Back   | Minus   | Select   | 9      | Coin   |
 #define GPIO_PIN_17 GpioAction::BUTTON_PRESS_S2     // S2     | Start  | Plus    | Start    | 10     | Start  |
-#define GPIO_PIN_18 GpioAction::BUTTON_PRESS_L3     // L3     | LS     | LS      | L3       | 11     | LS     |
-#define GPIO_PIN_19 GpioAction::BUTTON_PRESS_R3     // R3     | RS     | RS      | R3       | 12     | RS     |
-#define GPIO_PIN_20 GpioAction::BUTTON_PRESS_A1     // A1     | Guide  | Home    | PS       | 13     | ~      |
-#define GPIO_PIN_21 GpioAction::BUTTON_PRESS_A2     // A2     | ~      | Capture | ~        | 14     | ~      |
-
-// Setting GPIO pins to assigned by add-on
-//
-#define GPIO_PIN_00 GpioAction::ASSIGNED_TO_ADDON   // nRF24 CSN
-#define GPIO_PIN_01 GpioAction::ASSIGNED_TO_ADDON   // nRF24 CE
-#define GPIO_PIN_14 GpioAction::NONE                // TURBO disabled, freed
-#define GPIO_PIN_15 GpioAction::ASSIGNED_TO_ADDON   // PC817 power-off optocoupler
-
-// nRF24L01+ SPI pins (SPI0, custom pins via addon)
-#define NRF24_TX_ENABLED 1
-#define NRF24_RX_ENABLED 0
-#define NRF24_PIN_SCK  22
-#define NRF24_PIN_MOSI 26
-#define NRF24_PIN_MISO 27
-#define NRF24_PIN_CSN  0
-#define NRF24_PIN_CE   1
-
-// Power management
-#define PRESS_SIM_PIN 15
-
-// Battery meter (6x WS2812B)
-#define BATTERY_METER_ENABLED 1
-#define METER_LED_PIN 28
-#define METER_LED_COUNT 6
-
-// Battery ADC divider on GP26? NO - GP26 is MOSI. Battery meter addon defaults to GP26 for ADC...
-// CONFLICT RESOLVED: battery ADC moved to GP29? Not exposed. Moved to GP14 (freed from TURBO).
-// GP14 is ADC-capable? NO. ADC pins on Pico: GP26, GP27, GP28, GP29 only.
-// FINAL: battery ADC uses GP29? Not exposed on headers... 
-// Actually Pico exposes GP26/27/28 as ADC0/1/2. GP28 is taken by LED meter.
-// Battery ADC: use GP27? Taken by MISO. GP26? Taken by MOSI.
-// SOLUTION: swap SPI pins to free one ADC pin for battery sensing:
-//   nRF24: SCK=GP18, MOSI=GP19, MISO=GP20, CSN=GP21, CE=GP22  (SPI1! supports these pins)
-//   freed: GP26 (ADC0) for battery ADC
-//   L3/R3/A1/A2 move: L3=GP18->? conflict again...
-// FINAL FINAL pin plan (SPI1 for nRF24, keys stay on GP2-13+16-21):
-//   Keys: GP2-13 (12) + GP16-21 (6) = 18 keys (unchanged)
-//   nRF24 SPI1: SCK=GP10? No - keys. SPI1 valid pins: GP10,11,12,14,15 (SCK); GP8,9,11,12,15(MOSI)...
-//   SPI1 SCK options: GP10/14, MOSI: GP11/15, MISO: GP8/12/13
-//   Keys occupy 10,11,12,13. TURBO disabled frees GP14! 
-//   nRF24 SPI1: SCK=GP14, MOSI=GP15, MISO=GP8? no GP8 is B3 key...
-//   MISO options on SPI1: GP8,9,12,13 - all are keys.
-//   Give up SPI1. Use SPI0 on GP0-3? GP0,1 = CSN/CE... SPI0 SCK options: GP2,6,18; MOSI: GP3,7,19; MISO: GP4,8,20
-//   Keys on all of them...
-// DECISION: Move 4 keys (L3,R3,A1,A2) from GP18-21 to GP26,27,28,15 (mixed ADC/GPIO).
-//   L3=GP26? L3 is digital input, ADC pin works as GPIO. But then no ADC pin left for battery!
-// TRUE FINAL PLAN: Battery ADC shares via software - measure battery with multimeter instead,
-//   or accept: battery % derived from voltage via divider on GP26, and nRF24 SPI0 on GP18-21+GP22:
-//   nRF24 SPI0 alt pins: SCK=GP18, MOSI=GP19, MISO=GP20, CSN=GP21, CE=GP22
-//   L3,R3,A1,A2 move to: L3=GP26, R3=GP27, A1=GP28? GP28 was LED meter pin... 
-//   Meter LED moves to GP0 (freed I2C SDA).
-//   A2=GP1 (freed I2C SCL).
-//   Battery ADC: NO PIN LEFT. Battery % is sampled by... 
-
-// PRAGMATIC RESOLUTION: Battery sensing is dropped from hardware; battery % is
-// ESTIMATED in firmware (mAh-based estimation via runtime). WS2812 meter still works.
-// If hardware voltage sensing is critical, v2 hardware revision will re-plan pins.
-
 #define GPIO_PIN_26 GpioAction::BUTTON_PRESS_L3     // L3     | LS     | LS      | L3       | 11     | LS     |
 #define GPIO_PIN_27 GpioAction::BUTTON_PRESS_R3     // R3     | RS     | RS      | R3       | 12     | RS     |
 #define GPIO_PIN_28 GpioAction::BUTTON_PRESS_A1     // A1     | Guide  | Home    | PS       | 13     | ~      |
 #define GPIO_PIN_15 GpioAction::BUTTON_PRESS_A2     // A2     | ~      | Capture | ~        | 14     | ~      |
 
-// nRF24L01+ on SPI0 alternate pins GP18-22
+// Pins owned by the nRF24 radio - must NOT be mapped as buttons
+#define GPIO_PIN_18 GpioAction::NONE                // nRF24 SCK  (SPI0)
+#define GPIO_PIN_19 GpioAction::NONE                // nRF24 MOSI (SPI0)
+#define GPIO_PIN_20 GpioAction::NONE                // nRF24 MISO (SPI0)
+#define GPIO_PIN_21 GpioAction::NONE                // nRF24 CSN  (SPI0)
+#define GPIO_PIN_22 GpioAction::NONE                // nRF24 CE
+#define GPIO_PIN_00 GpioAction::ASSIGNED_TO_ADDON   // WS2812B battery meter
+#define GPIO_PIN_01 GpioAction::NONE                // spare
+#define GPIO_PIN_14 GpioAction::NONE                // PC817 power-off pulse (driven by TX addon)
+#define GPIO_PIN_25 GpioAction::NONE                // spare (Pico onboard LED unused)
+
+// nRF24L01+ on SPI0 alternate pins GP18-22 (single definition, v5 plan)
 #define NRF24_TX_ENABLED 1
 #define NRF24_RX_ENABLED 0
 #define NRF24_PIN_SCK  18
@@ -109,11 +64,11 @@
 #define NRF24_PIN_CSN  21
 #define NRF24_PIN_CE   22
 
-// Power-off optocoupler moved to GP14 (freed from TURBO)
+// Power-off optocoupler on GP14 (freed from TURBO)
 #define PRESS_SIM_PIN 14
 #define TURBO_ENABLED 0
 
-// Battery meter WS2812B moved to GP0 (freed from I2C SDA)
+// Battery meter WS2812B on GP0 (freed from I2C)
 #define BATTERY_METER_ENABLED 1
 #define METER_LED_PIN 0
 #define METER_LED_COUNT 6
